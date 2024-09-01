@@ -1,0 +1,2 @@
+[filter "redact"]
+  clean = sed "s/.*#\\ REDACT\\ //"
