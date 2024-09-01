@@ -7,9 +7,10 @@ import numpy as num
 from time import sleep
 from threading import Thread
 import cv2 as cv
+from math import sqrt
 
-COLOR = num.array([217, 37, 217])  # magenta
-TOLERANCE, BOX = 50, 400
+TOL, BOX = ?, 400
+HSV = (?, ?, ?)  # ~magenta
 
 def getRes():
     for line in out("wlr-randr").split('\n'):
@@ -23,39 +24,71 @@ exe = out("which wl-screenrec")
 
 rec = run(["sudo", "-E", exe, "-g", geom, "--ffmpeg-muxer", "v4l2", "-f", DEV], stdout=DEVNULL)
 
-target, mask = None, None
+target, mask, bBoxes = None, None, []
 def process(frame):
-    diff = num.abs(frame[:,:,:3] - COLOR)
-    mask = num.all(diff <= TOLERANCE, axis=2)
+    global bBoxes
+    hsv = cv.cvtColor(frame, cv.COLOR_BGR2HSV)
+    lower = num.array([HSV[0] - TOL, HSV[1], HSV[2]])
+    upper = num.array([HSV[0] + TOL, 255, 255])
+    outline = cv.inRange(hsv, lower, upper)
 
-    found = num.argwhere(mask)
-    if found.size > 0:
-        center = num.mean(found, axis=0).astype(int)  # "CoM"
-        return tuple(center), mask
-    return None, mask
+    # Detect names, healthbars:
+    contours, _ = cv.findContours(outline, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
+    bBoxes = []
+    for contour in contours:
+        x, y, w, h = cv.boundingRect(contour)
+        if (w / h) > 2 and cv.contourArea(contour) > 100:  # WIP
+            bBoxes.append((x, y, w, h))
+
+    found = num.argwhere(outline > 0)
+    if found.size:
+        center = (BOX // 2, BOX // 2)
+        onTarget, outlineHits = checkInOutline(outline, center)
+        if onTarget:
+            distances = [sqrt((x-center[0])**2 + (y-center[1])**2) for _, (x, y) in outlineHits]
+            if sum(distances) / len(distances) >= 3:
+                return center, outline
+
+    return None, outline
+
+def checkInOutline(mask, center):
+    directions = [(0, -1), (-1, 0), (1, 0)]  # up, left, right
+    hits, outlineHits = 0, []
+    for dx, dy in directions:
+        x, y = center
+        while 0 <= x < BOX and 0 <= y < BOX:
+            if mask[y, x] > 0:
+                outlineHits.append((center, (x, y)))
+                hits += 1
+                break
+            x += dx; y += dy
+    return hits == 3, outlineHits
 
 class Debug:
     def __init__(self):
         self.window = tk.Tk()
         self.window.attributes("-type", "dialog")
-        self.canvas = tk.Canvas(self.window, width=400, height=400, bg="black")
+        self.canvas = tk.Canvas(self.window, width=BOX, height=BOX, bg="black")
         self.canvas.pack()
 
     def update(self, target, mask):
-        heatmap = ?
-        photo = PhotoImage(image=Image.fromarray(heatmap))
+        photo = PhotoImage(image=Image.fromarray(mask))
+        self.canvas.delete("all")
         self.canvas.create_image(0, 0, anchor=tk.NW, image=photo)
         self.canvas.image = photo
 
-        self.canvas.create_line(200, 0, 200, 400, fill="green")
-        self.canvas.create_line(0, 200, 400, 200, fill="green")
+        self.canvas.create_line(BOX//2, 0, BOX//2, BOX, fill="gray", dash=(2, 2))
+        self.canvas.create_line(0, BOX//2, BOX, BOX//2, fill="gray", dash=(2, 2))
 
         if target:
-            x, y = 399 - target[1], target[0]
+            x, y = target
             self.canvas.create_oval(x-5, y-5, x+5, y+5, outline="white")
-            self.canvas.create_line(x, 0, x, 400, fill="yellow")
-            self.canvas.create_line(0, y, 400, y, fill="yellow")
-            self.canvas.create_text(10, 10, anchor=tk.NW, text=f"({target[0]}, {target[1]})", fill="yellow")
+            self.canvas.create_line(x, 0, x, BOX, fill="yellow")
+            self.canvas.create_line(0, y, BOX, y, fill="yellow")
+            self.canvas.create_text(10, 10, anchor=tk.NW, text=f"({x}, {y})", fill="yellow")
+
+        for x, y, w, h in bBoxes:
+            self.canvas.create_rectangle(x, y, x+w, y+h, outline="red", width=2)
 
         self.window.update()
 
