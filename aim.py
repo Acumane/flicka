@@ -5,6 +5,7 @@ from PIL import Image
 import numpy as num
 from time import sleep
 from threading import Thread
+from handle import MouseHandler
 import cv2 as cv
 
 TOL, BOX = ?, 400
@@ -18,13 +19,13 @@ def getRes():
 
 DEV = "/dev/video0"
 W, H = getRes()
-
 geom = f"{(W-BOX)//2},{(H-BOX)//2} {BOX}x{BOX}"
 exe = out("which wl-screenrec")
 
 rec = run(["sudo", "-E", exe, "-g", geom, "--ffmpeg-muxer", "v4l2", "-f", DEV], stdout=DEVNULL)
 
 name_mask, outline_mask, bBoxes = None, None, []
+target = None
 
 def mask(hsv, vals, tol=TOL):
     lower = num.array([vals[0] - tol, vals[1], vals[2]])
@@ -55,7 +56,7 @@ def process(frame):
     hsv = cv.cvtColor(frame, cv.COLOR_BGR2HSV)
 
     name_mask = mask(hsv, NAME_HSV)
-    kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (8, 8))
+    kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (20, 2))
     name_mask = cv.morphologyEx(cv.morphologyEx(name_mask, cv.MORPH_CLOSE, kernel), cv.MORPH_OPEN, kernel)
     outline_mask = mask(hsv, OUTLINE_HSV)
 
@@ -101,6 +102,7 @@ class Debug:
         self.canvas.pack()
 
     def update(self, name_mask, outline_mask):
+        global target
         composite = cv.cvtColor(name_mask, cv.COLOR_GRAY2RGB)
         composite[:,:,1] = cv.max(composite[:,:,1], outline_mask) # green channel
 
@@ -112,7 +114,7 @@ class Debug:
         self.canvas.create_line(BOX//2, 0, BOX//2, BOX, fill="gray", dash=(2, 2))
         self.canvas.create_line(0, BOX//2, BOX, BOX//2, fill="gray", dash=(2, 2))
 
-        target, name_above = None, None
+        name_above = None
         min_dist, center = BOX, BOX // 2
 
         for x, y, w, h in bBoxes:
@@ -128,12 +130,12 @@ class Debug:
         if name_above:
             x, y, w, h = name_above
             target = findTarget(outline_mask, x, y+h, x+w, bBoxes)
-
-        if target:
-            x, y = target
-            self.canvas.create_oval(x-5, y-5, x+5, y+5, outline="yellow", width=2)
-            self.canvas.create_text(10, 10, anchor=tk.NW, text=f"({x}, {y})", fill="yellow")
-            self.canvas.create_line(center, center, x, y, fill="yellow", width=2)
+            if target:
+                x, y = target
+                self.canvas.create_oval(x-5, y-5, x+5, y+5, outline="yellow", width=2)
+                self.canvas.create_text(10, 10, anchor=tk.NW, text=f"({x}, {y})", fill="yellow")
+                self.canvas.create_line(center, center, x, y, fill="yellow", width=2)
+        else: target = None
         self.window.update()
 
 def capture():
@@ -145,15 +147,24 @@ def capture():
         ret, frame = cap.read()
         if ret:
             name_mask, outline_mask = process(frame)
-        sleep(0.01)
+        # sleep(0.01)
 
+def getTarget():
+    global target; return target
+
+mouse = MouseHandler(BOX // 2)
 Thread(target=capture, daemon=True).start()
 debug = Debug()
 
 try:
+    Thread(target=mouse.start, args=(getTarget,), daemon=True).start()
     while True:
-        if name_mask is not None: debug.update(name_mask, outline_mask)
-except Exception as e: print(f"ERROR: {e}")
+        if name_mask is not None:
+            debug.update(name_mask, outline_mask)
+        sleep(0.01)
+except Exception as e:
+    print(f"ERROR: {e}")
 finally:
+    mouse.cleanup()
     debug.window.destroy()
     rec.terminate()
