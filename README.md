@@ -22,5 +22,3 @@ $ python aim.py
 
 ### Disclaimer
 My fine-tuned values have been redacted, and no further instructions will be given on its use. What's left will only be useful to some. Code responsibly, the risk is yours.
-
-The rest of you: your friend in Diamond 5 needs to touch grass. Learn to love low Elo hell.
